@@ -24,8 +24,6 @@ if ( ! class_exists( 'Aws\S3\S3Client' ) ) {
 use Aws\S3\S3Client;
 use Aws\Exception\AwsException;
 
-
-
 class AWS_S3_Multi_Instance {
 
     private $options;
@@ -37,6 +35,9 @@ class AWS_S3_Multi_Instance {
 
         add_action( 'admin_menu', array( $this, 'add_plugin_page' ) );
         add_action( 'admin_init', array( $this, 'page_init' ) );
+
+        // Bulk sync AJAX hook
+        add_action( 'wp_ajax_aws_s3_bulk_sync', array( $this, 'handle_bulk_sync_ajax' ) );
 
         // 1. Sync Hooks (Upload to S3)
         if ( ! empty( $this->options['sync_media'] ) ) {
@@ -60,17 +61,21 @@ class AWS_S3_Multi_Instance {
     }
 
     /**
-     * Initializes the S3 Client
+     * Initializes the S3 Client with safety trim adjustments
      */
     private function get_s3_client() {
-        if ( empty( $this->options['aws_key'] ) || empty( $this->options['aws_secret'] ) || empty( $this->options['aws_region'] ) ) return false;
+        $aws_key    = isset( $this->options['aws_key'] ) ? trim( $this->options['aws_key'] ) : '';
+        $aws_secret = isset( $this->options['aws_secret'] ) ? trim( $this->options['aws_secret'] ) : '';
+        $aws_region = isset( $this->options['aws_region'] ) ? trim( $this->options['aws_region'] ) : '';
+
+        if ( empty( $aws_key ) || empty( $aws_secret ) || empty( $aws_region ) ) return false;
 
         return new S3Client([
             'version'     => 'latest',
-            'region'      => $this->options['aws_region'],
+            'region'      => $aws_region,
             'credentials' => [
-                'key'    => $this->options['aws_key'],
-                'secret' => $this->options['aws_secret'],
+                'key'    => $aws_key,
+                'secret' => $aws_secret,
             ],
         ]);
     }
@@ -79,15 +84,17 @@ class AWS_S3_Multi_Instance {
      * Uploads a file to S3 mirroring the local uploads directory structure
      */
     private function upload_to_s3( $file_path ) {
-        $s3 = $this->get_s3_client();
-        if ( ! $s3 || empty( $this->options['bucket_name'] ) || ! file_exists( $file_path ) ) return false;
+        $s3          = $this->get_s3_client();
+        $bucket_name = isset( $this->options['bucket_name'] ) ? trim( $this->options['bucket_name'] ) : '';
 
-        // Strip the local base directory to get the relative path (e.g., "2026/06/image.jpg" or "elementor/css/global.css")
+        if ( ! $s3 || empty( $bucket_name ) || ! file_exists( $file_path ) ) return false;
+
+        // Strip the local base directory to get the relative path (e.g., "2026/06/image.jpg")
         $relative_path = ltrim( str_replace( $this->upload_dir['basedir'], '', $file_path ), '/' );
 
         try {
             $s3->putObject([
-                'Bucket'      => $this->options['bucket_name'],
+                'Bucket'      => $bucket_name,
                 'Key'         => $relative_path,
                 'SourceFile'  => $file_path,
                 'ACL'         => 'public-read',
@@ -133,18 +140,64 @@ class AWS_S3_Multi_Instance {
         }
     }
 
+    /* --- BACKGROUND BULK SYNC LOGIC --- */
+
+    public function handle_bulk_sync_ajax() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( array( 'message' => 'Unauthorized user.' ) );
+        }
+
+        // Count total matching attachments
+        $total_images = wp_count_posts( 'attachment' )->inherit;
+        
+        $offset     = isset( $_POST['offset'] ) ? intval( $_POST['offset'] ) : 0;
+        $batch_size = isset( $_POST['batch_size'] ) ? intval( $_POST['batch_size'] ) : 5;
+
+        $attachments = get_posts( array(
+            'post_type'      => 'attachment',
+            'posts_per_page' => $batch_size,
+            'offset'         => $offset,
+            'post_status'    => 'inherit',
+        ) );
+
+        if ( empty( $attachments ) ) {
+            wp_send_json_success( array( 'total' => $total_images ) );
+        }
+
+        foreach ( $attachments as $attachment ) {
+            $file_path = get_attached_file( $attachment->ID );
+            
+            if ( ! $file_path || ! file_exists( $file_path ) ) {
+                continue; 
+            }
+
+            // 1. Upload Main File
+            $this->upload_to_s3( $file_path );
+
+            // 2. Scan and Upload Thumbnails
+            $metadata = wp_get_attachment_metadata( $attachment->ID );
+            if ( isset( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
+                $base_dir = dirname( $file_path ) . '/';
+                foreach ( $metadata['sizes'] as $size_info ) {
+                    $thumb_path = $base_dir . $size_info['file'];
+                    if ( file_exists( $thumb_path ) ) {
+                        $this->upload_to_s3( $thumb_path );
+                    }
+                }
+            }
+        }
+
+        wp_send_json_success( array( 'total' => intval( $total_images ) ) );
+    }
+
     /* --- URL REWRITE METHODS --- */
 
-    /**
-     * Swaps the local uploads URL for the S3 URL
-     */
     public function rewrite_url_to_s3( $url ) {
         if ( empty( $url ) ) return $url;
 
         $local_base_url = $this->upload_dir['baseurl'];
-        $s3_base_url = rtrim( $this->options['s3_base_url'], '/' );
+        $s3_base_url    = rtrim( trim( $this->options['s3_base_url'] ), '/' );
 
-        // If the URL contains the local uploads directory path, swap it
         if ( strpos( $url, $local_base_url ) !== false ) {
             $url = str_replace( $local_base_url, $s3_base_url, $url );
         }
@@ -152,9 +205,6 @@ class AWS_S3_Multi_Instance {
         return $url;
     }
 
-    /**
-     * Swaps URLs inside the responsive image srcset attributes
-     */
     public function rewrite_srcset_to_s3( $sources, $size_array, $image_src, $image_meta, $attachment_id ) {
         foreach ( $sources as $width => $source ) {
             $sources[$width]['url'] = $this->rewrite_url_to_s3( $source['url'] );
@@ -179,7 +229,80 @@ class AWS_S3_Multi_Instance {
                 submit_button();
                 ?>
             </form>
+
+            <div class="card" style="margin-top: 30px; max-width: 600px; padding: 20px; background: #fff; border: 1px solid #ccd0d4; box-shadow: 0 1px 1px rgba(0,0,0,.04);">
+                <h2>Sync Existing Media Library</h2>
+                <p>Click the button below to copy all media files currently stored on this local instance up to your S3 bucket.</p>
+                
+                <button type="button" id="start-s3-sync" class="button button-secondary">Start Bulk Upload</button>
+                
+                <div id="sync-progress-container" style="display:none; margin-top: 15px;">
+                    <div style="background: #eee; width: 100%; height: 20px; border-radius: 3px; overflow: hidden; border: 1px solid #ccc;">
+                        <div id="sync-progress-bar" style="background: #2271b1; width: 0%; height: 100%; transition: width 0.3s;"></div>
+                    </div>
+                    <p id="sync-status-text" style="font-weight: bold; margin-top: 5px;">Preparing files...</p>
+                </div>
+            </div>
         </div>
+
+        <script>
+        jQuery(document).ready(function($) {
+            let offset = 0;
+            const batchSize = 5; 
+
+            $('#start-s3-sync').on('click', function() {
+                $(this).attr('disabled', true).text('Syncing...');
+                $('#sync-progress-container').show();
+                runSyncBatch();
+            });
+
+            function runSyncBatch() {
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'aws_s3_bulk_sync',
+                        offset: offset,
+                        batch_size: batchSize
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            offset += batchSize;
+                            let total = parseInt(response.data.total);
+                            
+                            if (total === 0) {
+                                $('#sync-progress-bar').css('width', '100%');
+                                $('#sync-status-text').text('No media library items found to upload.');
+                                $('#start-s3-sync').text('Sync Finished');
+                                return;
+                            }
+
+                            let percent = Math.min(100, Math.round((offset / total) * 100));
+                            
+                            $('#sync-progress-bar').css('width', percent + '%');
+                            $('#sync-status-text').text('Synced ' + Math.min(offset, total) + ' of ' + total + ' files.');
+
+                            if (offset < total) {
+                                runSyncBatch(); 
+                            } else {
+                                $('#sync-progress-bar').css('background', '#46b450');
+                                $('#sync-status-text').text('🎉 Bulk sync complete! All files are safely in S3.');
+                                $('#start-s3-sync').text('Sync Finished');
+                            }
+                        } else {
+                            let errorMsg = response.data && response.data.message ? response.data.message : 'Unknown connection error';
+                            $('#sync-status-text').text('❌ Error: ' + errorMsg);
+                            $('#start-s3-sync').attr('disabled', false).text('Resume Bulk Upload');
+                        }
+                    },
+                    error: function() {
+                        $('#sync-status-text').text('❌ Server timeout encountered. Retrying...');
+                        setTimeout(runSyncBatch, 2000); 
+                    }
+                });
+            }
+        });
+        </script>
         <?php
     }
 
@@ -196,19 +319,19 @@ class AWS_S3_Multi_Instance {
     }
 
     public function aws_key_callback() {
-        printf( '<input type="text" name="aws_s3_sync_settings[aws_key]" value="%s" style="width: 300px;" />', isset( $this->options['aws_key'] ) ? esc_attr( $this->options['aws_key'] ) : '' );
+        printf( '<input type="text" name="aws_s3_sync_settings[aws_key]" value="%s" style="width: 300px;" />', isset( $this->options['aws_key'] ) ? esc_attr( trim($this->options['aws_key']) ) : '' );
     }
     public function aws_secret_callback() {
-        printf( '<input type="password" name="aws_s3_sync_settings[aws_secret]" value="%s" style="width: 300px;" />', isset( $this->options['aws_secret'] ) ? esc_attr( $this->options['aws_secret'] ) : '' );
+        printf( '<input type="password" name="aws_s3_sync_settings[aws_secret]" value="%s" style="width: 300px;" />', isset( $this->options['aws_secret'] ) ? esc_attr( trim($this->options['aws_secret']) ) : '' );
     }
     public function aws_region_callback() {
-        printf( '<input type="text" name="aws_s3_sync_settings[aws_region]" value="%s" placeholder="us-east-1" />', isset( $this->options['aws_region'] ) ? esc_attr( $this->options['aws_region'] ) : '' );
+        printf( '<input type="text" name="aws_s3_sync_settings[aws_region]" value="%s" placeholder="us-east-1" />', isset( $this->options['aws_region'] ) ? esc_attr( trim($this->options['aws_region']) ) : '' );
     }
     public function bucket_name_callback() {
-        printf( '<input type="text" name="aws_s3_sync_settings[bucket_name]" value="%s" />', isset( $this->options['bucket_name'] ) ? esc_attr( $this->options['bucket_name'] ) : '' );
+        printf( '<input type="text" name="aws_s3_sync_settings[bucket_name]" value="%s" />', isset( $this->options['bucket_name'] ) ? esc_attr( trim($this->options['bucket_name']) ) : '' );
     }
     public function s3_base_url_callback() {
-        printf( '<input type="url" name="aws_s3_sync_settings[s3_base_url]" value="%s" style="width: 300px;" placeholder="https://your-bucket.s3.amazonaws.com" /><br><small>The URL to serve files from. Put your CloudFront domain here if you use one.</small>', isset( $this->options['s3_base_url'] ) ? esc_attr( $this->options['s3_base_url'] ) : '' );
+        printf( '<input type="url" name="aws_s3_sync_settings[s3_base_url]" value="%s" style="width: 300px;" placeholder="https://your-bucket.s3.amazonaws.com" /><br><small>The URL to serve files from. Put your CloudFront domain here if you use one.</small>', isset( $this->options['s3_base_url'] ) ? esc_attr( trim($this->options['s3_base_url']) ) : '' );
     }
     public function sync_options_callback() {
         $media = isset( $this->options['sync_media'] ) ? 'checked' : '';
@@ -218,9 +341,5 @@ class AWS_S3_Multi_Instance {
     }
 }
 
-if ( is_admin() || wp_doing_ajax() || wp_is_json_request() ) {
-    new AWS_S3_Multi_Instance();
-} else {
-    // Only load the rewrite rules on the frontend to keep the admin loading local files safely
-    new AWS_S3_Multi_Instance();
-}
+// Instantiate the class globally
+new AWS_S3_Multi_Instance();
