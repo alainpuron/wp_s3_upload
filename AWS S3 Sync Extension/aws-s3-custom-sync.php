@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AWS S3 Multi-Instance Sync & Serve
  * Description: Uploads Media and CSS to S3 and rewrites URLs to serve directly from the bucket. Includes built-in setup instructions and local historical library processing.
- * Version: 3.5
+ * Version: 3.6
  * Author: Alain Puron
  */
 
@@ -51,12 +51,17 @@ class AWS_S3_Multi_Instance {
 
         // 2. URL Rewrite Hooks (Serve from S3)
         if ( ! empty( $this->options['s3_base_url'] ) ) {
-            // Rewrite Media URLs
-            add_filter( 'wp_get_attachment_url', array( $this, 'rewrite_url_to_s3' ) );
-            add_filter( 'wp_calculate_image_srcset', array( $this, 'rewrite_srcset_to_s3' ), 10, 5 );
             
-            // Rewrite CSS Enqueue URLs (Catches Elementor and custom uploads)
-            add_filter( 'style_loader_src', array( $this, 'rewrite_url_to_s3' ) );
+            // ONLY rewrite media URLs if media sync option is active
+            if ( ! empty( $this->options['sync_media'] ) ) {
+                add_filter( 'wp_get_attachment_url', array( $this, 'rewrite_url_to_s3' ) );
+                add_filter( 'wp_calculate_image_srcset', array( $this, 'rewrite_srcset_to_s3' ), 10, 5 );
+            }
+            
+            // ONLY rewrite CSS URLs if CSS sync option is active
+            if ( ! empty( $this->options['sync_css'] ) ) {
+                add_filter( 'style_loader_src', array( $this, 'rewrite_url_to_s3' ) );
+            }
         }
     }
 
@@ -89,7 +94,6 @@ class AWS_S3_Multi_Instance {
 
         if ( ! $s3 || empty( $bucket_name ) || ! file_exists( $file_path ) ) return false;
 
-        // Strip the local base directory to get the relative path (e.g., "2026/06/image.jpg")
         $relative_path = ltrim( str_replace( $this->upload_dir['basedir'], '', $file_path ), '/' );
 
         try {
@@ -114,7 +118,6 @@ class AWS_S3_Multi_Instance {
         if ( $file_path ) {
             $this->upload_to_s3( $file_path );
             
-            // Sync generated thumbnails
             if ( isset( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
                 $base_dir = dirname( $file_path ) . '/';
                 foreach ( $metadata['sizes'] as $size => $size_info ) {
@@ -147,7 +150,6 @@ class AWS_S3_Multi_Instance {
             wp_send_json_error( array( 'message' => 'Unauthorized user.' ) );
         }
 
-        // Count total matching attachments
         $total_images = wp_count_posts( 'attachment' )->inherit;
         
         $offset     = isset( $_POST['offset'] ) ? intval( $_POST['offset'] ) : 0;
@@ -166,15 +168,10 @@ class AWS_S3_Multi_Instance {
 
         foreach ( $attachments as $attachment ) {
             $file_path = get_attached_file( $attachment->ID );
-            
-            if ( ! $file_path || ! file_exists( $file_path ) ) {
-                continue; 
-            }
+            if ( ! $file_path || ! file_exists( $file_path ) ) continue; 
 
-            // 1. Upload Main File
             $this->upload_to_s3( $file_path );
 
-            // 2. Scan and Upload Thumbnails
             $metadata = wp_get_attachment_metadata( $attachment->ID );
             if ( isset( $metadata['sizes'] ) && is_array( $metadata['sizes'] ) ) {
                 $base_dir = dirname( $file_path ) . '/';
@@ -222,7 +219,7 @@ class AWS_S3_Multi_Instance {
         ?>
         <div class="wrap">
             <h1>AWS S3 Multi-Instance Control Panel</h1>
-            <p>Configure seamless asset synchronization for highly available, multi-instance web servers.</p>
+            <p>Configure seamless asset synchronization for highly available web servers.</p>
             
             <div style="display: flex; gap: 25px; flex-wrap: wrap; margin-top: 20px;">
                 
@@ -311,8 +308,8 @@ class AWS_S3_Multi_Instance {
 
                             let percent = Math.min(100, Math.round((offset / total) * 100));
                             
-                                $('#sync-progress-bar').css('width', percent + '%');
-                                $('#sync-status-text').text('Synced ' + Math.min(offset, total) + ' of ' + total + ' files.');
+                            $('#sync-progress-bar').css('width', percent + '%');
+                            $('#sync-status-text').text('Synced ' + Math.min(offset, total) + ' of ' + total + ' files.');
 
                             if (offset < total) {
                                 runSyncBatch(); 
