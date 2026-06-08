@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AWS S3 Multi-Instance Sync & Serve
  * Description: Uploads Media and CSS to S3 and rewrites URLs to serve directly from the bucket. Includes built-in setup instructions and local historical library processing.
- * Version: 3.6
+ * Version: 3.8
  * Author: Alain Puron
  */
 
@@ -86,7 +86,7 @@ class AWS_S3_Multi_Instance {
     }
 
     /**
-     * Uploads a file to S3 mirroring the local uploads directory structure
+     * Uploads a file to S3 mirroring the local uploads directory structure with strict MIME types
      */
     private function upload_to_s3( $file_path ) {
         $s3          = $this->get_s3_client();
@@ -96,13 +96,46 @@ class AWS_S3_Multi_Instance {
 
         $relative_path = ltrim( str_replace( $this->upload_dir['basedir'], '', $file_path ), '/' );
 
+        // Explicit Extension Mapping to override faulty server-side mime sniffing
+        $file_ext = strtolower( pathinfo( $file_path, PATHINFO_EXTENSION ) );
+        switch ( $file_ext ) {
+            case 'css':
+                $content_type = 'text/css';
+                break;
+            case 'woff':
+                $content_type = 'font/woff';
+                break;
+            case 'woff2':
+                $content_type = 'font/woff2';
+                break;
+            case 'ttf':
+                $content_type = 'font/ttf';
+                break;
+            case 'svg':
+                $content_type = 'image/svg+xml';
+                break;
+            case 'webp':
+                $content_type = 'image/webp';
+                break;
+            case 'jpg':
+            case 'jpeg':
+                $content_type = 'image/jpeg';
+                break;
+            case 'png':
+                $content_type = 'image/png';
+                break;
+            default:
+                $content_type = mime_content_type( $file_path ) ?: 'application/octet-stream';
+                break;
+        }
+
         try {
             $s3->putObject([
                 'Bucket'      => $bucket_name,
                 'Key'         => $relative_path,
                 'SourceFile'  => $file_path,
                 'ACL'         => 'public-read',
-                'ContentType' => mime_content_type( $file_path ) ?: 'application/octet-stream'
+                'ContentType' => $content_type
             ]);
             return true;
         } catch ( AwsException $e ) {
@@ -150,11 +183,26 @@ class AWS_S3_Multi_Instance {
             wp_send_json_error( array( 'message' => 'Unauthorized user.' ) );
         }
 
-        $total_images = wp_count_posts( 'attachment' )->inherit;
-        
         $offset     = isset( $_POST['offset'] ) ? intval( $_POST['offset'] ) : 0;
         $batch_size = isset( $_POST['batch_size'] ) ? intval( $_POST['batch_size'] ) : 5;
 
+        // Force overwrite local files with correct MIME definitions on AWS
+        if ( $offset === 0 && ! empty( $this->options['sync_css'] ) ) {
+            $elementor_css_dir = $this->upload_dir['basedir'] . '/elementor/css/';
+            if ( is_dir( $elementor_css_dir ) ) {
+                $css_files = glob( $elementor_css_dir . '*.css' );
+                if ( is_array( $css_files ) ) {
+                    foreach ( $css_files as $css_file ) {
+                        if ( file_exists( $css_file ) ) {
+                            $this->upload_to_s3( $css_file );
+                        }
+                    }
+                }
+            }
+        }
+
+        $total_images = wp_count_posts( 'attachment' )->inherit;
+        
         $attachments = get_posts( array(
             'post_type'      => 'attachment',
             'posts_per_page' => $batch_size,
@@ -233,8 +281,8 @@ class AWS_S3_Multi_Instance {
                     </form>
 
                     <div class="card" style="margin-top: 25px; max-width: 100%; padding: 20px; background: #fff; border: 1px solid #ccd0d4; box-shadow: 0 1px 1px rgba(0,0,0,.04); border-radius: 4px;">
-                        <h2 style="margin-top:0;">Bulk Process Existing Media</h2>
-                        <p>If this website already has images inside its library, click below to migrate them to your Amazon S3 cluster automatically.</p>
+                        <h2 style="margin-top:0;">Bulk Process Existing Media & Style Assets</h2>
+                        <p>Click below to securely deploy all historical media uploads along with local Elementor CSS system files to your S3 cluster.</p>
                         
                         <button type="button" id="start-s3-sync" class="button button-secondary" style="height:34px; padding:0 16px;">Start Bulk Upload Worker</button>
                         
@@ -301,7 +349,7 @@ class AWS_S3_Multi_Instance {
                             
                             if (total === 0) {
                                 $('#sync-progress-bar').css('width', '100%');
-                                $('#sync-status-text').text('No media library items found to upload.');
+                                $('#sync-status-text').text('Processing asset structures complete.');
                                 $('#start-s3-sync').text('Sync Finished');
                                 return;
                             }
@@ -315,7 +363,7 @@ class AWS_S3_Multi_Instance {
                                 runSyncBatch(); 
                             } else {
                                 $('#sync-progress-bar').css('background', '#46b450');
-                                $('#sync-status-text').text('🎉 Bulk sync complete! All assets successfully deployed to S3 clusters.');
+                                $('#sync-status-text').text('🎉 Bulk sync complete! All media and Elementor layout stylesheets safely deployed to S3.');
                                 $('#start-s3-sync').text('Sync Finished');
                             }
                         } else {
