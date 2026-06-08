@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: AWS S3 Multi-Instance Sync & Serve
- * Description: Uploads Media and CSS to S3 and rewrites URLs to serve directly from the bucket. Includes built-in setup instructions and local historical library processing.
- * Version: 3.8
+ * Description: Uploads Media and CSS to S3/S3-Compatible buckets and rewrites URLs. Includes built-in configuration and troubleshooting instructions.
+ * Version: 3.9
  * Author: Alain Puron
  */
 
@@ -66,23 +66,32 @@ class AWS_S3_Multi_Instance {
     }
 
     /**
-     * Initializes the S3 Client with safety trim adjustments
+     * Initializes the S3/S3-Compatible Client
      */
     private function get_s3_client() {
-        $aws_key    = isset( $this->options['aws_key'] ) ? trim( $this->options['aws_key'] ) : '';
-        $aws_secret = isset( $this->options['aws_secret'] ) ? trim( $this->options['aws_secret'] ) : '';
-        $aws_region = isset( $this->options['aws_region'] ) ? trim( $this->options['aws_region'] ) : '';
+        $aws_key      = isset( $this->options['aws_key'] ) ? trim( $this->options['aws_key'] ) : '';
+        $aws_secret   = isset( $this->options['aws_secret'] ) ? trim( $this->options['aws_secret'] ) : '';
+        $aws_region   = isset( $this->options['aws_region'] ) ? trim( $this->options['aws_region'] ) : '';
+        $custom_endpoint = isset( $this->options['aws_endpoint'] ) ? trim( $this->options['aws_endpoint'] ) : '';
 
         if ( empty( $aws_key ) || empty( $aws_secret ) || empty( $aws_region ) ) return false;
 
-        return new S3Client([
+        $args = [
             'version'     => 'latest',
             'region'      => $aws_region,
             'credentials' => [
                 'key'    => $aws_key,
                 'secret' => $aws_secret,
             ],
-        ]);
+        ];
+
+        // If a non-AWS custom endpoint is supplied (e.g., Cloudflare R2, Wasabi, DigitalOcean) inject it natively
+        if ( ! empty( $custom_endpoint ) ) {
+            $args['endpoint'] = $custom_endpoint;
+            $args['use_path_style_endpoint'] = true;
+        }
+
+        return new S3Client($args);
     }
 
     /**
@@ -96,7 +105,7 @@ class AWS_S3_Multi_Instance {
 
         $relative_path = ltrim( str_replace( $this->upload_dir['basedir'], '', $file_path ), '/' );
 
-        // Explicit Extension Mapping to override faulty server-side mime sniffing
+        // Strict extension mapping protects layouts against faulty web-server MIME-type signatures
         $file_ext = strtolower( pathinfo( $file_path, PATHINFO_EXTENSION ) );
         switch ( $file_ext ) {
             case 'css':
@@ -186,7 +195,7 @@ class AWS_S3_Multi_Instance {
         $offset     = isset( $_POST['offset'] ) ? intval( $_POST['offset'] ) : 0;
         $batch_size = isset( $_POST['batch_size'] ) ? intval( $_POST['batch_size'] ) : 5;
 
-        // Force overwrite local files with correct MIME definitions on AWS
+        // Sync local Elementor directories on initial execution flight path
         if ( $offset === 0 && ! empty( $this->options['sync_css'] ) ) {
             $elementor_css_dir = $this->upload_dir['basedir'] . '/elementor/css/';
             if ( is_dir( $elementor_css_dir ) ) {
@@ -267,7 +276,7 @@ class AWS_S3_Multi_Instance {
         ?>
         <div class="wrap">
             <h1>AWS S3 Multi-Instance Control Panel</h1>
-            <p>Configure seamless asset synchronization for highly available web servers.</p>
+            <p>Configure seamless cloud asset synchronization for architecture scaling or performance caching.</p>
             
             <div style="display: flex; gap: 25px; flex-wrap: wrap; margin-top: 20px;">
                 
@@ -282,7 +291,7 @@ class AWS_S3_Multi_Instance {
 
                     <div class="card" style="margin-top: 25px; max-width: 100%; padding: 20px; background: #fff; border: 1px solid #ccd0d4; box-shadow: 0 1px 1px rgba(0,0,0,.04); border-radius: 4px;">
                         <h2 style="margin-top:0;">Bulk Process Existing Media & Style Assets</h2>
-                        <p>Click below to securely deploy all historical media uploads along with local Elementor CSS system files to your S3 cluster.</p>
+                        <p>Click below to securely deploy all historical media uploads along with local Elementor CSS system files to your cloud storage bucket.</p>
                         
                         <button type="button" id="start-s3-sync" class="button button-secondary" style="height:34px; padding:0 16px;">Start Bulk Upload Worker</button>
                         
@@ -295,27 +304,24 @@ class AWS_S3_Multi_Instance {
                     </div>
                 </div>
 
-                <div style="flex: 1; min-width: 300px; max-width: 450px;">
+                <div style="flex: 1; min-width: 320px; max-width: 480px;">
                     <div class="card" style="padding: 20px; background: #f6f7f7; border: 1px solid #ccd0d4; box-shadow: 0 1px 1px rgba(0,0,0,.02); border-radius: 4px;">
-                        <h2 style="margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid #ccd0d4; color:#23282d;">📋 Step-by-Step Setup Instructions</h2>
+                        <h2 style="margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid #ccd0d4; color:#23282d;">📋 Configuration & Troubleshooting Handbook</h2>
                         
-                        <h3 style="color:#2271b1; margin-bottom:5px;">Step 1: Get AWS Keys</h3>
-                        <p style="margin-top:0; font-size:13px; line-height:1.5;">Log into your AWS Console, open <strong>IAM</strong>, and create an infrastructure user with <strong>Programmatic Access</strong>. Attach the <code>AmazonS3FullAccess</code> permission policy to provide the secure API keys required on the left.</p>
+                        <h3 style="color:#2271b1; margin-bottom:5px;">💡 Non-AWS Storage Compatibility</h3>
+                        <p style="margin-top:0; font-size:13px; line-height:1.5; color:#50575e;">This plugin supports any **S3-Compatible Object Storage** (Cloudflare R2, Wasabi, Backblaze B2, DigitalOcean Spaces). To connect alternative providers, insert their regional target link inside the <em>Custom S3-API Endpoint</em> box on the left.</p>
 
-                        <h3 style="color:#2271b1; margin-bottom:5px;">Step 2: Configure Your S3 Bucket</h3>
-                        <p style="margin-top:0; font-size:13px; line-height:1.5;">Open your Amazon S3 bucket permissions console and configure these two vital requirements:
-                        <ul style="list-style-type: disc; padding-left: 20px; margin-top:5px; font-size:13px;">
-                            <li><strong>Block Public Access:</strong> Uncheck the "Block all public access" checkbox.</li>
-                            <li><strong>Object Ownership:</strong> Click edit, switch it to <strong>ACLs Enabled</strong>, and acknowledge the security prompt.</li>
-                        </ul>
+                        <h3 style="color:#2271b1; margin-bottom:5px;">🛡️ Required S3 Bucket Permissions</h3>
+                        <p style="margin-top:0; font-size:13px; line-height:1.5; color:#50575e;">Ensure your target storage bucket has <strong>Block Public Access turned OFF</strong> and <strong>Object Ownership set to ACLs Enabled</strong> so the plugin can dynamically authorize image views.</p>
+
+                        <h3 style="color:#d94f4f; margin-bottom:5px;">⚠️ Troubleshooting Broken Layouts & Naked HTML</h3>
+                        <p style="margin-top:0; font-size:13px; line-height:1.5; color:#50575e;">If your images load fine but your body formatting looks broken after enabling CSS Sync, web browsers are blocking your stylesheets via <strong>CORS security restrictions</strong>. Fix this inside your network console with these steps:
+                        <ol style="padding-left: 20px; margin-top:5px; font-size:12px; line-height:1.4; color:#50575e;">
+                            <li style="margin-bottom:4px;"><strong>Apply CloudFront Policy:</strong> In your CloudFront Distribution, edit your Cache Behavior settings. Find <em>Response headers policy</em> and select the managed rule <code>CORS-With-All-Origins</code>.</li>
+                            <li style="margin-bottom:4px;"><strong>Wipe Cache Node Memory:</strong> Go to the CloudFront <em>Invalidations</em> tab, create an invalidation path for <code>/*</code>, and wait 30 seconds.</li>
+                            <li style="margin-bottom:4px;"><strong>Re-compile Elementor Files:</strong> In your WordPress sidebar, go to <strong>Elementor > Tools</strong> and click <strong>Regenerate Files & Data</strong>. Then refresh your homepage using a completely fresh Incognito Window.</li>
+                        </ol>
                         </p>
-
-                        <h3 style="color:#2271b1; margin-bottom:5px;">Step 3: Define Your Delivery URL</h3>
-                        <p style="margin-top:0; font-size:13px; line-height:1.5;">By default, input your standard bucket address: <br><code>https://your-bucket-name.s3.your-region.amazonaws.com</code><br><br>
-                        <strong>🚀 Pro-Tip:</strong> For high-traffic networks, create an <strong>AWS CloudFront Distribution</strong> pointing to your S3 bucket. Paste your CloudFront domain name or custom branded CNAME (e.g., <code>https://cdn.yourdomain.com</code>) into the field to deliver media files worldwide via edge-caching.</p>
-
-                        <h3 style="color:#2271b1; margin-bottom:5px;">Step 4: Enable Sync Options</h3>
-                        <p style="margin-top:0; font-size:13px; line-height:1.5;">Check the sync boxes to intercept file workflows. The plugin safely strips trailing white spaces behind the scenes to avoid communication bugs.</p>
                     </div>
                 </div>
 
@@ -363,7 +369,7 @@ class AWS_S3_Multi_Instance {
                                 runSyncBatch(); 
                             } else {
                                 $('#sync-progress-bar').css('background', '#46b450');
-                                $('#sync-status-text').text('🎉 Bulk sync complete! All media and Elementor layout stylesheets safely deployed to S3.');
+                                $('#sync-status-text').text('🎉 Bulk sync complete! All assets and stylesheets safely deployed to cloud infrastructure clusters.');
                                 $('#start-s3-sync').text('Sync Finished');
                             }
                         } else {
@@ -387,9 +393,10 @@ class AWS_S3_Multi_Instance {
         register_setting( 'aws_s3_sync_group', 'aws_s3_sync_settings' );
         add_settings_section( 'setting_section_id', 'AWS Credentials & URL Settings', null, 'aws-s3-sync-admin' );
 
-        add_settings_field( 'aws_key', 'AWS Access Key', array( $this, 'aws_key_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
-        add_settings_field( 'aws_secret', 'AWS Secret Key', array( $this, 'aws_secret_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
-        add_settings_field( 'aws_region', 'AWS Region', array( $this, 'aws_region_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
+        add_settings_field( 'aws_key', 'AWS Access Key (or API User)', array( $this, 'aws_key_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
+        add_settings_field( 'aws_secret', 'AWS Secret Key (or API Password)', array( $this, 'aws_secret_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
+        add_settings_field( 'aws_region', 'Data Center Region', array( $this, 'aws_region_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
+        add_settings_field( 'aws_endpoint', 'Custom S3-API Endpoint (Optional)', array( $this, 'aws_endpoint_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
         add_settings_field( 'bucket_name', 'Bucket Name', array( $this, 'bucket_name_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
         add_settings_field( 's3_base_url', 'S3 / CloudFront Delivery URL', array( $this, 's3_base_url_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
         add_settings_field( 'sync_options', 'Sync Activation Options', array( $this, 'sync_options_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
@@ -404,11 +411,14 @@ class AWS_S3_Multi_Instance {
     public function aws_region_callback() {
         printf( '<input type="text" name="aws_s3_sync_settings[aws_region]" value="%s" placeholder="us-west-2" style="width: 150px;" />', isset( $this->options['aws_region'] ) ? esc_attr( trim($this->options['aws_region']) ) : '' );
     }
+    public function aws_endpoint_callback() {
+        printf( '<input type="text" name="aws_s3_sync_settings[aws_endpoint]" value="%s" style="width: 330px;" placeholder="https://account_id.r2.cloudflarestorage.com" /><br><small>Leave completely blank if using standard Amazon AWS. Input link only if adapting for Cloudflare R2, Wasabi, or Backblaze.</small>', isset( $this->options['aws_endpoint'] ) ? esc_attr( trim($this->options['aws_endpoint']) ) : '' );
+    }
     public function bucket_name_callback() {
         printf( '<input type="text" name="aws_s3_sync_settings[bucket_name]" value="%s" style="width: 250px;" placeholder="my-wordpress-bucket" />', isset( $this->options['bucket_name'] ) ? esc_attr( trim($this->options['bucket_name']) ) : '' );
     }
     public function s3_base_url_callback() {
-        printf( '<input type="url" name="aws_s3_sync_settings[s3_base_url]" value="%s" style="width: 330px;" placeholder="https://cdn.yourdomain.com" /><br><small>Input your raw S3 path or your custom CloudFront URL address edge node link without a trailing slash.</small>', isset( $this->options['s3_base_url'] ) ? esc_attr( trim($this->options['s3_base_url']) ) : '' );
+        printf( '<input type="url" name="aws_s3_sync_settings[s3_base_url]" value="%s" style="width: 330px;" placeholder="https://cdn.yourdomain.com" /><br><small>Input your custom CloudFront CDN link or S3 distribution edge link without a trailing slash.</small>', isset( $this->options['s3_base_url'] ) ? esc_attr( trim($this->options['s3_base_url']) ) : '' );
     }
     public function sync_options_callback() {
         $media = isset( $this->options['sync_media'] ) ? 'checked' : '';
