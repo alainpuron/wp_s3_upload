@@ -1,8 +1,17 @@
+To make this completely bulletproof for your users, we can build a clean, step-by-step **Setup & Configuration Guide** right into the plugin's dashboard page.
+
+By splitting the settings page into a clean layout with the forms on the left and a crystal-clear checklist on the right, your average user can configure their AWS account, set up their S3 permissions, connect CloudFront, and run their bulk sync without ever having to leave WordPress.
+
+Here is the complete, updated plugin code with the embedded user instructions built directly into the admin screen UI.
+
+Replace the contents of your `aws-s3-custom-sync.php` file with this code:
+
+```php
 <?php
 /**
  * Plugin Name: AWS S3 Multi-Instance Sync & Serve
- * Description: Uploads Media and CSS to S3 and rewrites URLs to serve directly from the bucket.
- * Version: 3.0
+ * Description: Uploads Media and CSS to S3 and rewrites URLs to serve directly from the bucket. Includes built-in setup instructions and local historical library processing.
+ * Version: 3.5
  * Author: Alain Puron
  */
 
@@ -221,27 +230,59 @@ class AWS_S3_Multi_Instance {
     public function create_admin_page() {
         ?>
         <div class="wrap">
-            <h1>AWS S3 Multi-Instance Settings</h1>
-            <form method="post" action="options.php">
-                <?php
-                settings_fields( 'aws_s3_sync_group' );
-                do_settings_sections( 'aws-s3-sync-admin' );
-                submit_button();
-                ?>
-            </form>
+            <h1>AWS S3 Multi-Instance Control Panel</h1>
+            <p>Configure seamless asset synchronization for highly available, multi-instance web servers.</p>
+            
+            <div style="display: flex; gap: 25px; flex-wrap: wrap; margin-top: 20px;">
+                
+                <div style="flex: 2; min-width: 450px;">
+                    <form method="post" action="options.php">
+                        <?php
+                        settings_fields( 'aws_s3_sync_group' );
+                        do_settings_sections( 'aws-s3-sync-admin' );
+                        submit_button();
+                        ?>
+                    </form>
 
-            <div class="card" style="margin-top: 30px; max-width: 600px; padding: 20px; background: #fff; border: 1px solid #ccd0d4; box-shadow: 0 1px 1px rgba(0,0,0,.04);">
-                <h2>Sync Existing Media Library</h2>
-                <p>Click the button below to copy all media files currently stored on this local instance up to your S3 bucket.</p>
-                
-                <button type="button" id="start-s3-sync" class="button button-secondary">Start Bulk Upload</button>
-                
-                <div id="sync-progress-container" style="display:none; margin-top: 15px;">
-                    <div style="background: #eee; width: 100%; height: 20px; border-radius: 3px; overflow: hidden; border: 1px solid #ccc;">
-                        <div id="sync-progress-bar" style="background: #2271b1; width: 0%; height: 100%; transition: width 0.3s;"></div>
+                    <div class="card" style="margin-top: 25px; max-width: 100%; padding: 20px; background: #fff; border: 1px solid #ccd0d4; box-shadow: 0 1px 1px rgba(0,0,0,.04); border-radius: 4px;">
+                        <h2 style="margin-top:0;">Bulk Process Existing Media</h2>
+                        <p>If this website already has images inside its library, click below to migrate them to your Amazon S3 cluster automatically.</p>
+                        
+                        <button type="button" id="start-s3-sync" class="button button-secondary" style="height:34px; padding:0 16px;">Start Bulk Upload Worker</button>
+                        
+                        <div id="sync-progress-container" style="display:none; margin-top: 20px;">
+                            <div style="background: #eee; width: 100%; height: 22px; border-radius: 4px; overflow: hidden; border: 1px solid #ccc;">
+                                <div id="sync-progress-bar" style="background: #2271b1; width: 0%; height: 100%; transition: width 0.3s;"></div>
+                            </div>
+                            <p id="sync-status-text" style="font-weight: bold; margin-top: 8px; color:#333;">Initializing background streams...</p>
+                        </div>
                     </div>
-                    <p id="sync-status-text" style="font-weight: bold; margin-top: 5px;">Preparing files...</p>
                 </div>
+
+                <div style="flex: 1; min-width: 300px; max-width: 450px;">
+                    <div class="card" style="padding: 20px; background: #f6f7f7; border: 1px solid #ccd0d4; box-shadow: 0 1px 1px rgba(0,0,0,.02); border-radius: 4px;">
+                        <h2 style="margin-top: 0; padding-bottom: 10px; border-bottom: 1px solid #ccd0d4; color:#23282d;">📋 Step-by-Step Setup Instructions</h2>
+                        
+                        <h3 style="color:#2271b1; margin-bottom:5px;">Step 1: Get AWS Keys</h3>
+                        <p style="margin-top:0; font-size:13px; line-height:1.5;">Log into your AWS Console, open <strong>IAM</strong>, and create an infrastructure user with <strong>Programmatic Access</strong>. Attach the <code>AmazonS3FullAccess</code> permission policy to provide the secure API keys required on the left.</p>
+
+                        <h3 style="color:#2271b1; margin-bottom:5px;">Step 2: Configure Your S3 Bucket</h3>
+                        <p style="margin-top:0; font-size:13px; line-height:1.5;">Open your Amazon S3 bucket permissions console and configure these two vital requirements:
+                        <ul style="list-style-type: disc; padding-left: 20px; margin-top:5px; font-size:13px;">
+                            <li><strong>Block Public Access:</strong> Uncheck the "Block all public access" checkbox.</li>
+                            <li><strong>Object Ownership:</strong> Click edit, switch it to <strong>ACLs Enabled</strong>, and acknowledge the security prompt.</li>
+                        </ul>
+                        </p>
+
+                        <h3 style="color:#2271b1; margin-bottom:5px;">Step 3: Define Your Delivery URL</h3>
+                        <p style="margin-top:0; font-size:13px; line-height:1.5;">By default, input your standard bucket address: <br><code>https://your-bucket-name.s3.your-region.amazonaws.com</code><br><br>
+                        <strong>🚀 Pro-Tip:</strong> For high-traffic networks, create an <strong>AWS CloudFront Distribution</strong> pointing to your S3 bucket. Paste your CloudFront domain name or custom branded CNAME (e.g., <code>https://cdn.yourdomain.com</code>) into the field to deliver media files worldwide via edge-caching.</p>
+
+                        <h3 style="color:#2271b1; margin-bottom:5px;">Step 4: Enable Sync Options</h3>
+                        <p style="margin-top:0; font-size:13px; line-height:1.5;">Check the sync boxes to intercept file workflows. The plugin safely strips trailing white spaces behind the scenes to avoid communication bugs.</p>
+                    </div>
+                </div>
+
             </div>
         </div>
 
@@ -286,17 +327,17 @@ class AWS_S3_Multi_Instance {
                                 runSyncBatch(); 
                             } else {
                                 $('#sync-progress-bar').css('background', '#46b450');
-                                $('#sync-status-text').text('🎉 Bulk sync complete! All files are safely in S3.');
+                                $('#sync-status-text').text('🎉 Bulk sync complete! All assets successfully deployed to S3 clusters.');
                                 $('#start-s3-sync').text('Sync Finished');
                             }
                         } else {
-                            let errorMsg = response.data && response.data.message ? response.data.message : 'Unknown connection error';
+                            let errorMsg = response.data && response.data.message ? response.data.message : 'Unknown cloud environment error';
                             $('#sync-status-text').text('❌ Error: ' + errorMsg);
                             $('#start-s3-sync').attr('disabled', false).text('Resume Bulk Upload');
                         }
                     },
                     error: function() {
-                        $('#sync-status-text').text('❌ Server timeout encountered. Retrying...');
+                        $('#sync-status-text').text('❌ Communication throttle encountered. Retrying synchronization thread...');
                         setTimeout(runSyncBatch, 2000); 
                     }
                 });
@@ -314,32 +355,34 @@ class AWS_S3_Multi_Instance {
         add_settings_field( 'aws_secret', 'AWS Secret Key', array( $this, 'aws_secret_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
         add_settings_field( 'aws_region', 'AWS Region', array( $this, 'aws_region_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
         add_settings_field( 'bucket_name', 'Bucket Name', array( $this, 'bucket_name_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
-        add_settings_field( 's3_base_url', 'S3 Delivery URL', array( $this, 's3_base_url_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
-        add_settings_field( 'sync_options', 'Sync Options', array( $this, 'sync_options_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
+        add_settings_field( 's3_base_url', 'S3 / CloudFront Delivery URL', array( $this, 's3_base_url_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
+        add_settings_field( 'sync_options', 'Sync Activation Options', array( $this, 'sync_options_callback' ), 'aws-s3-sync-admin', 'setting_section_id' );
     }
 
     public function aws_key_callback() {
-        printf( '<input type="text" name="aws_s3_sync_settings[aws_key]" value="%s" style="width: 300px;" />', isset( $this->options['aws_key'] ) ? esc_attr( trim($this->options['aws_key']) ) : '' );
+        printf( '<input type="text" name="aws_s3_sync_settings[aws_key]" value="%s" style="width: 330px;" placeholder="AKIAIOSFODNN7EXAMPLE" />', isset( $this->options['aws_key'] ) ? esc_attr( trim($this->options['aws_key']) ) : '' );
     }
     public function aws_secret_callback() {
-        printf( '<input type="password" name="aws_s3_sync_settings[aws_secret]" value="%s" style="width: 300px;" />', isset( $this->options['aws_secret'] ) ? esc_attr( trim($this->options['aws_secret']) ) : '' );
+        printf( '<input type="password" name="aws_s3_sync_settings[aws_secret]" value="%s" style="width: 330px;" />', isset( $this->options['aws_secret'] ) ? esc_attr( trim($this->options['aws_secret']) ) : '' );
     }
     public function aws_region_callback() {
-        printf( '<input type="text" name="aws_s3_sync_settings[aws_region]" value="%s" placeholder="us-east-1" />', isset( $this->options['aws_region'] ) ? esc_attr( trim($this->options['aws_region']) ) : '' );
+        printf( '<input type="text" name="aws_s3_sync_settings[aws_region]" value="%s" placeholder="us-west-2" style="width: 150px;" />', isset( $this->options['aws_region'] ) ? esc_attr( trim($this->options['aws_region']) ) : '' );
     }
     public function bucket_name_callback() {
-        printf( '<input type="text" name="aws_s3_sync_settings[bucket_name]" value="%s" />', isset( $this->options['bucket_name'] ) ? esc_attr( trim($this->options['bucket_name']) ) : '' );
+        printf( '<input type="text" name="aws_s3_sync_settings[bucket_name]" value="%s" style="width: 250px;" placeholder="my-wordpress-bucket" />', isset( $this->options['bucket_name'] ) ? esc_attr( trim($this->options['bucket_name']) ) : '' );
     }
     public function s3_base_url_callback() {
-        printf( '<input type="url" name="aws_s3_sync_settings[s3_base_url]" value="%s" style="width: 300px;" placeholder="https://your-bucket.s3.amazonaws.com" /><br><small>The URL to serve files from. Put your CloudFront domain here if you use one.</small>', isset( $this->options['s3_base_url'] ) ? esc_attr( trim($this->options['s3_base_url']) ) : '' );
+        printf( '<input type="url" name="aws_s3_sync_settings[s3_base_url]" value="%s" style="width: 330px;" placeholder="https://cdn.yourdomain.com" /><br><small>Input your raw S3 path or your custom CloudFront URL address edge node link without a trailing slash.</small>', isset( $this->options['s3_base_url'] ) ? esc_attr( trim($this->options['s3_base_url']) ) : '' );
     }
     public function sync_options_callback() {
         $media = isset( $this->options['sync_media'] ) ? 'checked' : '';
         $css = isset( $this->options['sync_css'] ) ? 'checked' : '';
-        echo "<label><input type='checkbox' name='aws_s3_sync_settings[sync_media]' value='1' $media> Sync & Rewrite Media Library</label><br>";
-        echo "<label><input type='checkbox' name='aws_s3_sync_settings[sync_css]' value='1' $css> Sync & Rewrite Elementor CSS</label>";
+        echo "<label><input type='checkbox' name='aws_s3_sync_settings[sync_media]' value='1' $media> Enable Media Library Sync & URL Rewriting</label><br style='margin-bottom:6px;'>";
+        echo "<label><input type='checkbox' name='aws_s3_sync_settings[sync_css]' value='1' $css> Enable Elementor Dynamic Stylesheet Sync</label>";
     }
 }
 
 // Instantiate the class globally
 new AWS_S3_Multi_Instance();
+
+```
