@@ -1,12 +1,3 @@
-To make this completely bulletproof for your users, we can build a clean, step-by-step **Setup & Configuration Guide** right into the plugin's dashboard page.
-
-By splitting the settings page into a clean layout with the forms on the left and a crystal-clear checklist on the right, your average user can configure their AWS account, set up their S3 permissions, connect CloudFront, and run their bulk sync without ever having to leave WordPress.
-
-Here is the complete, updated plugin code with the embedded user instructions built directly into the admin screen UI.
-
-Replace the contents of your `aws-s3-custom-sync.php` file with this code:
-
-```php
 <?php
 /**
  * Plugin Name: AWS S3 Multi-Instance Sync & Serve
@@ -320,8 +311,8 @@ class AWS_S3_Multi_Instance {
 
                             let percent = Math.min(100, Math.round((offset / total) * 100));
                             
-                            $('#sync-progress-bar').css('width', percent + '%');
-                            $('#sync-status-text').text('Synced ' + Math.min(offset, total) + ' of ' + total + ' files.');
+                                $('#sync-progress-bar').css('width', percent + '%');
+                                $('#sync-status-text').text('Synced ' + Math.min(offset, total) + ' of ' + total + ' files.');
 
                             if (offset < total) {
                                 runSyncBatch(); 
@@ -337,7 +328,7 @@ class AWS_S3_Multi_Instance {
                         }
                     },
                     error: function() {
-                        $('#sync-status-text').text('❌ Communication throttle encountered. Retrying synchronization thread...');
+                        $('#sync-status-text').text('❌ Server timeout encountered. Retrying...');
                         setTimeout(runSyncBatch, 2000); 
                     }
                 });
@@ -384,5 +375,3 @@ class AWS_S3_Multi_Instance {
 
 // Instantiate the class globally
 new AWS_S3_Multi_Instance();
-
-```
